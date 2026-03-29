@@ -1,0 +1,426 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Watchdog</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: radial-gradient(ellipse at 50% 30%, #1a0e3a 0%, #080810 70%);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+      color: #fff;
+      user-select: none;
+    }
+
+    .app {
+      position: relative;
+      z-index: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 28px;
+    }
+
+    /* ── Title ───────────────────────────────────────── */
+    .title {
+      letter-spacing: 8px;
+      text-transform: uppercase;
+      font-size: 13px;
+      font-weight: 400;
+      color: rgba(255,255,255,0.35);
+    }
+
+    /* ── Stage (white background) ────────────────────── */
+    .stage {
+      position: relative;
+      width: 360px;
+      height: 360px;
+      border-radius: 28px;
+      background: #ffffff;
+      border: 1px solid rgba(0,0,0,0.08);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      box-shadow:
+        0 24px 80px rgba(0,0,0,0.55),
+        0 0 0 1px rgba(255,255,255,0.06);
+      overflow: hidden;
+    }
+
+    /* Two layers stacked — we crossfade between them to eliminate
+       the browser's blank-frame flash at GIF loop boundaries. */
+    .dog-layer {
+      position: absolute;
+      width: 320px;
+      height: 320px;
+      image-rendering: pixelated;
+      /* 50 ms crossfade — fast enough to be invisible, long enough to cover
+         any blank frame the browser would show at the loop boundary. */
+      transition: opacity 0.05s linear;
+    }
+
+    /* ── State chip ──────────────────────────────────── */
+    .chip-row {
+      position: absolute;
+      bottom: 14px;
+      left: 0; right: 0;
+      display: flex;
+      justify-content: center;
+      pointer-events: none;
+    }
+
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(0,0,0,0.62);
+      border: 1px solid rgba(255,255,255,0.1);
+      border-radius: 100px;
+      padding: 5px 16px;
+      font-size: 11px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.65);
+      backdrop-filter: blur(12px);
+      transition: color 0.3s, border-color 0.3s;
+    }
+
+    .chip.in-transition {
+      color: #c4b0ff;
+      border-color: rgba(180,155,255,0.35);
+    }
+
+    .chip .arrow {
+      opacity: 0.4;
+      font-style: normal;
+    }
+
+    /* ── Buttons ─────────────────────────────────────── */
+    .controls {
+      display: flex;
+      gap: 10px;
+    }
+
+    .btn {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      gap: 7px;
+      padding: 16px 18px;
+      min-width: 82px;
+      background: rgba(255,255,255,0.05);
+      border: 1.5px solid rgba(255,255,255,0.1);
+      border-radius: 18px;
+      color: rgba(255,255,255,0.5);
+      cursor: pointer;
+      font-size: 12px;
+      font-family: inherit;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      transition: background 0.2s, border-color 0.2s, color 0.2s,
+                  transform 0.15s, box-shadow 0.2s;
+      outline: none;
+    }
+
+    .btn:hover {
+      background: rgba(255,255,255,0.1);
+      border-color: rgba(255,255,255,0.25);
+      color: rgba(255,255,255,0.9);
+      transform: translateY(-2px);
+    }
+
+    .btn .icon { font-size: 24px; }
+
+    .btn.active {
+      background: linear-gradient(145deg, rgba(120,70,255,0.38), rgba(50,110,255,0.28));
+      border-color: rgba(160,130,255,0.6);
+      color: #fff;
+      box-shadow: 0 0 24px rgba(130,90,255,0.3), inset 0 1px 0 rgba(255,255,255,0.12);
+      transform: translateY(-2px);
+    }
+
+    .btn.pending {
+      border-color: rgba(251,191,36,0.55);
+      color: #fcd34d;
+    }
+
+    /* ── Loading overlay ─────────────────────────────── */
+    #overlay {
+      position: fixed;
+      inset: 0;
+      background: #080810;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 18px;
+      z-index: 200;
+      transition: opacity 0.4s;
+    }
+
+    #overlay.fade-out { opacity: 0; pointer-events: none; }
+
+    .spinner {
+      width: 36px;
+      height: 36px;
+      border: 2.5px solid rgba(255,255,255,0.08);
+      border-top-color: #9d7afa;
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .load-label {
+      font-size: 11px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: rgba(255,255,255,0.3);
+    }
+  </style>
+</head>
+<body>
+
+  <div id="overlay">
+    <div class="spinner"></div>
+    <div class="load-label">Loading animations</div>
+  </div>
+
+  <div class="app">
+    <div class="title">AI Watchdog</div>
+
+    <div class="stage">
+      <!-- Two layers: we always write the incoming GIF to the hidden layer,
+           then crossfade. This prevents the browser's blank-frame flash
+           that occurs at every native GIF loop boundary. -->
+      <img class="dog-layer" id="layer0" style="opacity:0" alt="">
+      <img class="dog-layer" id="layer1" style="opacity:0" alt="">
+
+      <div class="chip-row">
+        <div class="chip" id="chip">Idle</div>
+      </div>
+    </div>
+
+    <div class="controls">
+      <button class="btn" id="btn-bark"  onclick="requestState('bark')">
+        <span class="icon">🐕</span>Bark
+      </button>
+      <button class="btn active" id="btn-idle" onclick="requestState('idle')">
+        <span class="icon">😌</span>Idle
+      </button>
+      <button class="btn" id="btn-sleep" onclick="requestState('sleep')">
+        <span class="icon">😴</span>Sleep
+      </button>
+      <button class="btn" id="btn-talk"  onclick="requestState('talk')">
+        <span class="icon">💬</span>Talk
+      </button>
+    </div>
+  </div>
+
+  <script>
+  // ─────────────────────────────────────────────────────────────────
+  //  CONFIG
+  // ─────────────────────────────────────────────────────────────────
+
+  const BASE = '../images/gif-transparent-small/';
+
+  // Exact measured durations from file analysis.
+  // Loop GIFs      : 121 frames × 41.65 ms = 5040 ms
+  // Transition GIFs: 122 frames × 41.64 ms = 5080 ms
+  const LOOP_MS  = 5040;
+  const TRANS_MS = 5080;
+
+  // Crossfade duration (must match the CSS transition on .dog-layer).
+  // We fire the "next frame" timer FADE_MS early so the crossfade
+  // completes right as the GIF would naturally hit its loop boundary.
+  const FADE_MS  = 50;
+
+  const LOOP_STATES = ['bark', 'idle', 'sleep', 'talk'];
+  const ALL_GIFS    = ['bark', 'idle', 'sleep', 'talk',
+                       'bark-to-sleep', 'idle-to-sleep',
+                       'sleep-to-bark', 'sleep-to-idle'];
+
+  // Transition paths: paths[from][to] = ordered one-shot GIFs to play.
+  // talk ↔ * has no dedicated GIF, so we route through the sleep hub.
+  const PATHS = {
+    bark:  { idle: [],                                sleep: ['bark-to-sleep'],  talk: []                 },
+    idle:  { bark: [],                                sleep: ['idle-to-sleep'],  talk: []                 },
+    sleep: { bark: ['sleep-to-bark'],                 idle:  ['sleep-to-idle'],  talk: []                 },
+    talk:  { bark: [],                                idle:  [],                 sleep: []                },
+  };
+
+  const LABELS = { bark: 'Bark', idle: 'Idle', sleep: 'Sleep', talk: 'Talk' };
+  const ICONS  = { bark: '🐕',   idle: '😌',   sleep: '😴',   talk: '💬'   };
+
+  // ─────────────────────────────────────────────────────────────────
+  //  LAYER / CROSSFADE ENGINE
+  // ─────────────────────────────────────────────────────────────────
+
+  const layers = [
+    document.getElementById('layer0'),
+    document.getElementById('layer1'),
+  ];
+  let activeLayer = 0;  // index of the currently visible layer
+
+  /**
+   * Load `name` into the hidden layer and crossfade to it.
+   * Because the GIF is already cached, it starts from frame 1 instantly.
+   * The old layer fades out simultaneously, covering any blank frame.
+   */
+  function swapToGif(name) {
+    const next = 1 - activeLayer;
+    const curr = activeLayer;
+
+    layers[next].src             = BASE + name + '.gif';
+    layers[next].style.opacity   = '1';
+    layers[curr].style.opacity   = '0';
+    activeLayer                  = next;
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  STATE MACHINE
+  // ─────────────────────────────────────────────────────────────────
+
+  let currentLoopState = 'idle';
+  let targetState      = 'idle';
+  let isTransitioning  = false;
+  let transitionQueue  = [];
+  let animTimer        = null;
+
+  const chip = document.getElementById('chip');
+
+  function playLoopState(state) {
+    currentLoopState = state;
+    isTransitioning  = false;
+    transitionQueue  = [];
+    swapToGif(state);
+    updateUI();
+    scheduleLoopCheck();
+  }
+
+  /**
+   * Schedule the next loop-boundary check.
+   * We fire FADE_MS early so the crossfade has already started
+   * by the time the browser would show its blank-loop frame.
+   */
+  function scheduleLoopCheck() {
+    clearTimeout(animTimer);
+    animTimer = setTimeout(() => {
+      if (targetState !== currentLoopState) {
+        beginTransition(targetState);
+      } else {
+        // Stay in same state — swap to a fresh copy to restart the GIF
+        // cleanly (avoids drift and the browser's own loop-flash).
+        swapToGif(currentLoopState);
+        scheduleLoopCheck();
+      }
+    }, LOOP_MS - FADE_MS);
+  }
+
+  function beginTransition(target) {
+    isTransitioning = true;
+    transitionQueue = [...(PATHS[currentLoopState]?.[target] ?? [])];
+    updateUI();
+    playNextInQueue(target);
+  }
+
+  function playNextInQueue(finalState) {
+    if (transitionQueue.length === 0) {
+      // Arrived at finalState; re-route if target changed mid-chain.
+      if (targetState !== finalState) {
+        currentLoopState = finalState;
+        beginTransition(targetState);
+      } else {
+        playLoopState(finalState);
+      }
+      return;
+    }
+
+    const gifName = transitionQueue.shift();
+    swapToGif(gifName);
+    updateUI();
+    clearTimeout(animTimer);
+    animTimer = setTimeout(() => playNextInQueue(finalState), TRANS_MS - FADE_MS);
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  PUBLIC API
+  // ─────────────────────────────────────────────────────────────────
+
+  function requestState(target) {
+    if (target === targetState) return;
+    targetState = target;
+
+    // If the path to the new target has no transition GIFs (direct cut),
+    // switch immediately without waiting for the loop to end.
+    const path = PATHS[currentLoopState]?.[target] ?? [];
+    if (path.length === 0 && !isTransitioning) {
+      clearTimeout(animTimer);
+      playLoopState(target);
+      return;
+    }
+
+    updateUI();
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  UI
+  // ─────────────────────────────────────────────────────────────────
+
+  function updateUI() {
+    LOOP_STATES.forEach(s => {
+      const btn = document.getElementById('btn-' + s);
+      btn.classList.remove('active', 'pending');
+      if (!isTransitioning && s === currentLoopState && s === targetState) {
+        btn.classList.add('active');
+      } else if (s === targetState && (isTransitioning || targetState !== currentLoopState)) {
+        btn.classList.add('pending');
+      }
+    });
+
+    chip.classList.toggle('in-transition', isTransitioning);
+
+    if (isTransitioning) {
+      chip.innerHTML =
+        `${ICONS[currentLoopState]} <i class="arrow">→</i> ${ICONS[targetState]} ${LABELS[targetState]}`;
+    } else if (targetState !== currentLoopState) {
+      chip.innerHTML =
+        `${LABELS[currentLoopState]} <i class="arrow">→ ${LABELS[targetState]}</i>`;
+    } else {
+      chip.textContent = LABELS[currentLoopState];
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────
+  //  PRELOAD & BOOT
+  // ─────────────────────────────────────────────────────────────────
+
+  function preloadAll() {
+    let done = 0;
+    ALL_GIFS.forEach(name => {
+      const img  = new Image();
+      const tick = () => { if (++done === ALL_GIFS.length) onReady(); };
+      img.onload  = tick;
+      img.onerror = tick;
+      img.src = BASE + name + '.gif';
+    });
+  }
+
+  function onReady() {
+    const overlay = document.getElementById('overlay');
+    overlay.classList.add('fade-out');
+    setTimeout(() => overlay.remove(), 450);
+    playLoopState('idle');
+  }
+
+  preloadAll();
+  </script>
+</body>
+</html>
